@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { World } from './world.js';
 import { Player } from './player.js';
+import { BlockData } from './blockdata.js'; // Import BlockData
 
 // Basic Scene Setup
 const scene = new THREE.Scene();
@@ -10,23 +11,17 @@ const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const loadingElement = document.getElementById('loading');
-
-// Lighting
-const ambientLight = new THREE.AmbientLight(0xcccccc, 0.6);
-scene.add(ambientLight);
-const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
-directionalLight.position.set(1, 1, 0.5).normalize();
-scene.add(directionalLight);
-
 // World
 const world = new World();
-world.generate(); // Generate initial flat terrain
-world.addToScene(scene); // Add initial chunks to the scene
+// world.generate(); // Generation happens dynamically now
+// world.addToScene(scene); // Chunks added dynamically
+
+// Make world accessible globally for now (needed for player block interaction)
+window.world = world; // TODO: Refactor this later to avoid global scope pollution
 
 // Player
 const player = new Player(camera);
-scene.add(player.camera); // Add camera to scene
+// scene.add(player.camera); // Camera is already added via controls.getObject()
 
 // Controls
 const controls = new PointerLockControls(camera, document.body);
@@ -44,6 +39,13 @@ controls.addEventListener('unlock', () => {
     console.log('Pointer unlocked');
 });
 
+// Lighting
+const ambientLight = new THREE.AmbientLight(0xcccccc, 0.6);
+scene.add(ambientLight);
+const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+directionalLight.position.set(1, 1, 0.5).normalize();
+scene.add(directionalLight);
+
 // Handle window resize
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -53,84 +55,20 @@ window.addEventListener('resize', () => {
 
 // Game Loop
 let lastTime = performance.now();
-const clock = new THREE.Clock();
+const clock = new THREE.Clock(); // Clock is defined here
+const loadingElement = document.getElementById('loading'); // Get loading element
+
 
 function animate() {
     requestAnimationFrame(animate);
 
     const currentTime = performance.now();
-    const deltaTime = (currentTime - lastTime) / 1000; // delta time in seconds
+    const deltaTime = Math.min(0.05, (currentTime - lastTime) / 1000); // Clamp delta time to prevent large jumps
     lastTime = currentTime;
 
-    // Update player (movement, collision) - Basic movement for now
+    // Update player (movement, collision)
     player.update(deltaTime, world, controls);
 
-    // Check for chunk loading/unloading based on player position
-    const playerChunkPos = world.worldPosToChunkPos(player.camera.position);
-    if (!playerChunkPos.equals(world.lastPlayerChunkPos)) {
-         loadingElement.style.display = 'block';
-         world.updateChunksAroundPlayer(playerChunkPos, scene)
-            .then(() => {
-                loadingElement.style.display = 'none';
-                world.lastPlayerChunkPos.copy(playerChunkPos);
-            })
-            .catch(error => {
-                 console.error("Error updating chunks:", error);
-                 loadingElement.innerText = 'Error loading chunks!';
-            });
-    } else if (loadingElement.style.display !== 'none' && world.initialLoadComplete) {
-         loadingElement.style.display = 'none'; // Hide loading if it was showing but not needed
-    }
-
-
-    renderer.render(scene, camera);
-}
-
-// Initial chunk loading before starting animation loop
-const initialPlayerChunkPos = world.worldPosToChunkPos(player.camera.position);
-world.updateChunksAroundPlayer(initialPlayerChunkPos, scene)
-    .then(() => {
-        loadingElement.style.display = 'none';
-        world.initialLoadComplete = true;
-        world.lastPlayerChunkPos.copy(initialPlayerChunkPos);
-        animate(); // Start the game loop after initial load
-    })
-    .catch(error => {
-        console.error("Initial chunk loading failed:", error);
-        loadingElement.innerText = 'Error loading world!';
-    });
-
-// ... existing imports ...
-import { World } from './world.js';
-import { Player } from './player.js';
-import { BlockData } from './blockdata.js'; // Import BlockData
-
-// ... existing scene setup ...
-
-// World
-const world = new World();
-// world.generate(); // Generation happens dynamically now
-// world.addToScene(scene); // Chunks added dynamically
-
-// Make world accessible globally for now (needed for player block interaction)
-window.world = world; // TODO: Refactor this later to avoid global scope pollution
-
-// Player
-const player = new Player(camera);
-// scene.add(player.camera); // Camera is already added via controls.getObject()
-
-// Controls
-// ... existing controls setup ...
-
-// ... existing lighting ...
-
-// ... existing resize handler ...
-
-// Game Loop
-// ... existing game loop variables ...
-
-function animate() {
-    // ... existing animate logic ...
 
     // Check for chunk loading/unloading based on player position
     const playerChunkPos = world.worldPosToChunkPos(player.camera.position);
@@ -176,4 +114,3 @@ world.updateChunksAroundPlayer(initialPlayerChunkPos, scene)
         console.error("Initial chunk loading failed:", error);
         loadingElement.innerText = 'Error loading world!';
     });
-
