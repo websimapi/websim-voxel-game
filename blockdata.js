@@ -6,14 +6,18 @@ const BlockTypes = {
     GRASS: 1,
     DIRT: 2,
     STONE: 3,
+    WOOD: 4, // Add new block type
+    LEAVES: 5, // Add new block type
     // Add more blocks here...
 };
 
-// Mining time in seconds
-const BlockHardness = {
-    [BlockTypes.GRASS]: 0.6,
-    [BlockTypes.DIRT]: 0.5,
-    [BlockTypes.STONE]: 1.5,
+// Time in milliseconds to break each block type
+const BlockDurability = {
+    [BlockTypes.GRASS]: 250,
+    [BlockTypes.DIRT]: 200,
+    [BlockTypes.STONE]: 1000,
+    [BlockTypes.WOOD]: 800,
+    [BlockTypes.LEAVES]: 100,
 };
 
 const TILE_SIZE = 16; // Pixels per tile in the atlas
@@ -26,18 +30,26 @@ const TILE_UV_HEIGHT = 1 / ATLAS_HEIGHT_TILES;
 
 // Placeholder: UV coordinates for different blocks/faces
 // These assume a specific layout in the texture atlas
-// Example: 4x4 atlas (Grass Top, Side, Bottom, Dirt, Stone)
+// Example: 4x4 atlas (Grass Top, Side, Bottom, Dirt, Stone, Wood Top/Bottom, Wood Side, Leaves)
 const UVs = {
     [BlockTypes.GRASS]: {
         top: [0, 0], // Top-left tile
         side: [1, 0], // Second tile on top row
-        bottom: [2, 0], // Third tile on top row
+        bottom: [2, 0], // Third tile on top row (Dirt)
     },
     [BlockTypes.DIRT]: {
         all: [2, 0], // Use dirt texture for all sides
     },
     [BlockTypes.STONE]: {
          all: [3, 0], // Fourth tile on top row
+    },
+    [BlockTypes.WOOD]: {
+        top: [0, 1],    // First tile on second row
+        side: [1, 1],   // Second tile on second row
+        bottom: [0, 1], // Same as top for wood
+    },
+    [BlockTypes.LEAVES]: {
+        all: [2, 1], // Third tile on second row
     },
     // Define UVs for other blocks...
 };
@@ -104,13 +116,16 @@ function createTextureAtlas() {
     };
 
     // Draw placeholder textures based on UVs definitions
+    // Row 0
     drawTile(0, 0, '#38a138', 'G T'); // Grass Top
     drawTile(1, 0, '#8a5a2b', 'G S'); // Grass Side
     drawTile(2, 0, '#5e3a1d', 'Dirt'); // Dirt (Grass Bottom)
     drawTile(3, 0, '#808080', 'Ston'); // Stone
-
+    // Row 1
+    drawTile(0, 1, '#b8860b', 'Wd T'); // Wood Top/Bottom
+    drawTile(1, 1, '#8b4513', 'Wd S'); // Wood Side
+    drawTile(2, 1, '#228b22', 'Leaf'); // Leaves
     // Add more tiles as needed...
-
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.magFilter = THREE.NearestFilter; // Pixelated look
@@ -121,8 +136,8 @@ function createTextureAtlas() {
 
 export const BlockData = {
     types: BlockTypes,
-    hardness: BlockHardness, // Export hardness data
     texture: createTextureAtlas(), // Generate and assign the texture
+    durability: BlockDurability, // Add durability data
 
     // Define geometry for a standard cube face (adjust winding order if needed)
     // Order: Bottom-left, Bottom-right, Top-left, Top-right relative to face normal
@@ -153,12 +168,11 @@ export const BlockData = {
          return faceUVData;
     },
 
-    // Get hardness for a block type
-    getHardness: (blockType) => {
-        return BlockData.hardness[blockType] ?? 999; // Default to very high hardness if undefined
+    // Returns the time in ms to break a block, or 0 if unbreakable
+    getBlockDurability: (blockType) => {
+        return BlockData.durability[blockType] || 0;
     }
 };
 
 // Make world accessible globally for mouse click events (temporary solution)
-// Already done in main.js, not needed here
-// window.BlockData = BlockData;
+window.BlockData = BlockData;

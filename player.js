@@ -8,17 +8,15 @@ const PLAYER_SPEED = 5.0;
 const GRAVITY = 9.8 * 2; // Adjusted gravity
 const JUMP_VELOCITY = 8.0;
 const MAX_STEP_HEIGHT = 0.25; // How high the player can step up automatically
-const REACH_DISTANCE = 5; // How far the player can reach to interact with blocks
-
-// Use a Raycaster instance internally
-const raycaster = new THREE.Raycaster();
-raycaster.far = REACH_DISTANCE; // Set reach distance
+const REACH_DISTANCE = 5; // How far the player can interact with blocks
 
 export class Player {
     constructor(camera) {
         this.camera = camera;
         this.velocity = new THREE.Vector3();
         this.onGround = false;
+        this.raycaster = new THREE.Raycaster(); // Reusable raycaster
+        this.raycaster.far = REACH_DISTANCE; // Set max reach
 
         // Player position starts slightly above the center ground
         this.camera.position.set(
@@ -33,12 +31,9 @@ export class Player {
         this.moveRight = false;
         this.canJump = false;
 
-        // Mining state
-        this.isMining = false;
-        this.miningStartTime = 0;
-        this.miningTargetBlockPos = new THREE.Vector3();
-        this.miningTargetBlockType = BlockData.types.AIR;
-        this.miningTimeRequired = Infinity;
+        // Block breaking state
+        this.isBreaking = false;
+        this.breakingBlockInfo = null; // { position: THREE.Vector3, startTime: number, duration: number, type: number }
 
         this._addEventListeners();
     }
@@ -47,7 +42,8 @@ export class Player {
         document.addEventListener('keydown', (event) => this._onKeyDown(event));
         document.addEventListener('keyup', (event) => this._onKeyUp(event));
         document.addEventListener('mousedown', (event) => this._onMouseDown(event));
-        document.addEventListener('mouseup', (event) => this._onMouseUp(event)); // Add mouseup listener
+        document.addEventListener('mouseup', (event) => this._onMouseUp(event)); // Listen for mouse release
+        // Add listener for mouse movement to cancel breaking if pointer moves off block (handled in update)
     }
 
     _onKeyDown(event) {
@@ -84,104 +80,111 @@ export class Player {
         }
     }
 
-    // Function to find the block being looked at
-    _getLookedAtBlock() {
-        if (!window.world || !Object.keys(window.world.chunkMeshes).length) {
-            return null; // World or meshes not ready
-        }
-        raycaster.setFromCamera({ x: 0, y: 0 }, this.camera); // Center of screen
-        const intersects = raycaster.intersectObjects(Object.values(window.world.chunkMeshes), false); // Don't intersect children recursively
-
-        if (intersects.length > 0) {
-            const intersection = intersects[0];
-            // Ensure intersection is within reach (already handled by raycaster.far)
-            // if (intersection.distance > REACH_DISTANCE) return null;
-
-            const point = intersection.point;
-            const normal = intersection.face.normal;
-
-            // Calculate block position for breaking (slightly inside the clicked face)
-            const breakBlockPos = point.clone().add(normal.clone().multiplyScalar(-0.01)).floor();
-            // Calculate block position for placing (slightly outside the clicked face)
-            const placeBlockPos = point.clone().add(normal.clone().multiplyScalar(0.01)).floor();
-
-            const blockType = window.world.getVoxel(breakBlockPos.x, breakBlockPos.y, breakBlockPos.z);
-
-            return {
-                intersection,
-                breakBlockPos,
-                placeBlockPos,
-                blockType,
-                distance: intersection.distance
-            };
-        }
-        return null; // No block intersected within reach
+    // Helper to get the block position based on intersection point and normal
+    _getBlockPositionFromIntersection(point, normal, isPlacement) {
+        const offset = isPlacement ? 0.5 : -0.5;
+        return point.clone().addScaledVector(normal, offset).floor();
     }
 
+    _startBreaking(blockPos, blockType) {
+        const duration = BlockData.getBlockDurability(blockType);
+        if (duration > 0) { // Only break blocks with durability
+             this.isBreaking = true;
+             this.breakingBlockInfo = {
+                 position: blockPos.clone(),
+                 startTime: performance.now(),
+                 duration: duration,
+                 type: blockType // Store type to ensure we don't break air later
+             };
+             console.log(`Started breaking block at: ${blockPos.x}, ${blockPos.y}, ${blockPos.z} (Duration: ${duration}ms)`);
+             // TODO: Add visual breaking indicator start
+        } else {
+             console.log(`Cannot break block type ${blockType} at: ${blockPos.x}, ${blockPos.y}, ${blockPos.z}`);
+        }
+    }
+
+    _stopBreaking() {
+        if (this.isBreaking) {
+            console.log("Stopped breaking.");
+            // TODO: Remove visual breaking indicator
+        }
+        this.isBreaking = false;
+        this.breakingBlockInfo = null;
+    }
 
     _onMouseDown(event) {
         if (!document.pointerLockElement) return; // Only act if pointer is locked
 
-        const lookedAt = this._getLookedAtBlock();
-        if (!lookedAt) return; // Didn't click on a block
+        // Raycast to find intersected block
+        this.raycaster.setFromCamera({ x: 0, y: 0 }, this.camera); // Center of screen
+        const intersects = this.raycaster.intersectObjects(Object.values(window.world.chunkMeshes), false); // Don't intersect recursively
 
-        const { breakBlockPos, placeBlockPos, blockType } = lookedAt;
-
-        if (event.button === 0) { // Left click: Start or continue mining
-            if (BlockData.isSolid(blockType) && !this.isMining) {
-                this.isMining = true;
-                this.miningStartTime = performance.now();
-                this.miningTargetBlockPos.copy(breakBlockPos);
-                this.miningTargetBlockType = blockType;
-                this.miningTimeRequired = BlockData.getHardness(blockType) * 1000; // Convert s to ms
-                console.log(`Started mining block at: ${breakBlockPos.x}, ${breakBlockPos.y}, ${breakBlockPos.z} (Type: ${blockType}, Time: ${this.miningTimeRequired}ms)`);
-                // Optionally add visual feedback start here
+        if (intersects.length > 0) {
+            const intersection = intersects[0];
+            // Ignore intersections further than reach distance (double check)
+            if (intersection.distance > REACH_DISTANCE) {
+                 this._stopBreaking(); // Stop breaking if target out of reach
+                 return;
             }
 
-        } else if (event.button === 2) { // Right click: Place block immediately
-            console.log(`Attempting place block at: ${placeBlockPos.x}, ${placeBlockPos.y}, ${placeBlockPos.z}`);
-             // Basic check to prevent placing inside player (more robust check needed)
-             // Check feet and head level bounding box corners
-             const playerFeetY = this.camera.position.y - PLAYER_HEIGHT + 0.1;
-             const playerHeadY = this.camera.position.y - 0.1;
-             const halfWidth = PLAYER_WIDTH / 2;
-             const playerBB = new THREE.Box3(
-                new THREE.Vector3(this.camera.position.x - halfWidth, playerFeetY, this.camera.position.z - halfWidth),
-                new THREE.Vector3(this.camera.position.x + halfWidth, playerHeadY, this.camera.position.z + halfWidth)
-             );
-             const placeBlockBox = new THREE.Box3().setFromCenterAndSize(
-                placeBlockPos.clone().addScalar(0.5), // Center of block
-                new THREE.Vector3(1, 1, 1)
-             );
+            const point = intersection.point;
+            // Use the face normal for precision, especially at edges
+            const normal = intersection.face.normal;
 
 
-             if (!playerBB.intersectsBox(placeBlockBox)) {
-                 // Check if the target placement spot is currently air
-                 if (window.world.getVoxel(placeBlockPos.x, placeBlockPos.y, placeBlockPos.z) === BlockData.types.AIR) {
-                    window.world.setVoxel(placeBlockPos.x, placeBlockPos.y, placeBlockPos.z, BlockData.types.STONE); // Place STONE for now
-                    console.log(`Placed block at: ${placeBlockPos.x}, ${placeBlockPos.y}, ${placeBlockPos.z}`);
+            if (event.button === 0) { // Left click: Start or continue breaking block
+                 const blockPos = this._getBlockPositionFromIntersection(point, normal, false);
+                 const blockType = window.world.getVoxel(blockPos.x, blockPos.y, blockPos.z);
+
+                 if (BlockData.isSolid(blockType)) {
+                     // If already breaking this block, do nothing (handled in update)
+                     // Otherwise, start breaking
+                     if (!this.isBreaking || !this.breakingBlockInfo.position.equals(blockPos)) {
+                          this._startBreaking(blockPos, blockType);
+                     }
                  } else {
-                     console.log("Cannot place block: Spot not empty.");
+                      this._stopBreaking(); // Clicked on air or non-solid
                  }
-             } else {
-                  console.log("Cannot place block inside player.");
-             }
+
+            } else if (event.button === 2) { // Right click: Place block
+                 this._stopBreaking(); // Stop breaking if right-clicking
+
+                 const blockPos = this._getBlockPositionFromIntersection(point, normal, true);
+                 console.log(`Attempting to place block at: ${blockPos.x}, ${blockPos.y}, ${blockPos.z}`);
+
+                 // Basic check to prevent placing inside player
+                 const playerMin = this.camera.position.clone().sub(new THREE.Vector3(PLAYER_WIDTH / 2, PLAYER_HEIGHT, PLAYER_WIDTH / 2));
+                 const playerMax = this.camera.position.clone().add(new THREE.Vector3(PLAYER_WIDTH / 2, 0, PLAYER_WIDTH / 2));
+                 const placeBoundingBox = new THREE.Box3(blockPos, blockPos.clone().addScalar(1));
+                 const playerBoundingBox = new THREE.Box3(playerMin, playerMax);
+
+                 if (!placeBoundingBox.intersectsBox(playerBoundingBox)) {
+                     // Check if the target placement spot is currently air
+                     if (window.world.getVoxel(blockPos.x, blockPos.y, blockPos.z) === BlockData.types.AIR) {
+                        // TODO: Use selected block type from inventory/hotbar
+                        window.world.setVoxel(blockPos.x, blockPos.y, blockPos.z, BlockData.types.WOOD); // Place Wood for now
+                     } else {
+                         console.log("Target placement spot is occupied.");
+                     }
+
+                 } else {
+                      console.log("Cannot place block inside player.");
+                 }
+            }
+        } else {
+             // Clicked on nothing within reach
+             this._stopBreaking();
         }
     }
 
-     _onMouseUp(event) {
-         if (event.button === 0) { // Left click released
-             if (this.isMining) {
-                 console.log("Stopped mining.");
-                 this.isMining = false;
-                 // Optionally add visual feedback stop here
-             }
-         }
-     }
+    _onMouseUp(event) {
+        if (event.button === 0) { // Left mouse button released
+            this._stopBreaking();
+        }
+    }
 
-
-     // Basic AABB collision detection
-     _checkCollision(world, moveDirection) {
+    // Basic AABB collision detection
+    _checkCollision(world, moveDirection) {
         const halfWidth = PLAYER_WIDTH / 2;
         const playerPos = this.camera.position;
 
@@ -214,28 +217,42 @@ export class Player {
     update(deltaTime, world, controls) {
         const speed = PLAYER_SPEED * deltaTime;
 
-        // Handle mining progress
-        if (this.isMining) {
-            const lookedAt = this._getLookedAtBlock();
+        // --- Handle Breaking ---
+        if (this.isBreaking && this.breakingBlockInfo) {
+            // Raycast again to check if still looking at the same block
+            this.raycaster.setFromCamera({ x: 0, y: 0 }, this.camera);
+            const intersects = this.raycaster.intersectObjects(Object.values(world.chunkMeshes), false);
 
-            // Check if still looking at the same block
-            if (!lookedAt || !lookedAt.breakBlockPos.equals(this.miningTargetBlockPos)) {
-                // console.log("Looked away, stopping mining.");
-                this.isMining = false;
-                 // Optionally add visual feedback stop here
-            } else {
-                const elapsedTime = performance.now() - this.miningStartTime;
-                // TODO: Add visual indicator update here based on elapsedTime / miningTimeRequired
+            let stillLookingAtBlock = false;
+            if (intersects.length > 0 && intersects[0].distance <= REACH_DISTANCE) {
+                const intersection = intersects[0];
+                const currentBlockPos = this._getBlockPositionFromIntersection(intersection.point, intersection.face.normal, false);
 
-                if (elapsedTime >= this.miningTimeRequired) {
-                    console.log(`Finished mining block at: ${this.miningTargetBlockPos.x}, ${this.miningTargetBlockPos.y}, ${this.miningTargetBlockPos.z}`);
-                    world.setVoxel(this.miningTargetBlockPos.x, this.miningTargetBlockPos.y, this.miningTargetBlockPos.z, BlockData.types.AIR);
-                    this.isMining = false;
-                    // Optionally add visual feedback completion/stop here
+                if (this.breakingBlockInfo.position.equals(currentBlockPos)) {
+                     // Still looking at the same block, check time
+                     const elapsedTime = performance.now() - this.breakingBlockInfo.startTime;
+                     const progress = elapsedTime / this.breakingBlockInfo.duration;
+
+                     // TODO: Update visual breaking indicator (progress)
+
+                     if (elapsedTime >= this.breakingBlockInfo.duration) {
+                         // Break the block
+                         console.log(`Breaking block at: ${this.breakingBlockInfo.position.x}, ${this.breakingBlockInfo.position.y}, ${this.breakingBlockInfo.position.z}`);
+                         world.setVoxel(this.breakingBlockInfo.position.x, this.breakingBlockInfo.position.y, this.breakingBlockInfo.position.z, 0); // 0 is air
+                         this._stopBreaking(); // Reset state
+                         // TODO: Add block breaking sound/particles
+                         stillLookingAtBlock = true; // Prevent immediate stopBreaking below
+                     } else {
+                          stillLookingAtBlock = true; // Still looking and breaking
+                     }
                 }
             }
-        }
 
+            // If not still looking at the block, cancel breaking
+            if (!stillLookingAtBlock) {
+                this._stopBreaking();
+            }
+        }
 
         // Apply gravity
         this.velocity.y -= GRAVITY * deltaTime;
@@ -247,109 +264,100 @@ export class Player {
         controls.getDirection(moveDirection); // Get camera forward direction
 
         // Calculate right vector using correct cross product order (forward x up)
-        rightDirection.crossVectors(this.camera.up, moveDirection).normalize(); // Corrected order for right vector
+        // Previous order (up x forward) resulted in the left vector.
+        rightDirection.crossVectors(moveDirection, this.camera.up).normalize();
 
         let deltaX = 0;
         let deltaZ = 0;
 
         if (this.moveForward) {
-            deltaZ += speed; // Positive Z is forward relative to camera
+            deltaZ -= speed; // Movement is negated later when applying to moveDirection
         }
         if (this.moveBackward) {
-            deltaZ -= speed;
+            deltaZ += speed;
         }
         if (this.moveLeft) {
-            deltaX -= speed; // Negative X is left relative to camera
+            deltaX -= speed; // Negative deltaX for left
         }
         if (this.moveRight) {
-            deltaX += speed; // Positive X is right relative to camera
+            deltaX += speed; // Positive deltaX for right
         }
 
          // Calculate final movement vector based on camera direction
          const movement = new THREE.Vector3();
-         // Apply forward/backward movement along camera's direction
-         movement.add(moveDirection.clone().multiplyScalar(deltaZ));
+         // Apply forward/backward movement (inverted Z because getDirection points negative Z)
+         movement.add(moveDirection.clone().multiplyScalar(-deltaZ));
          // Apply left/right movement using the calculated rightDirection
          movement.add(rightDirection.clone().multiplyScalar(deltaX));
          movement.y = 0; // Horizontal movement only
 
-
-         // Normalize and scale if there is movement to maintain consistent speed
+         // Check if there is significant horizontal movement before normalizing and applying speed
+         // This prevents tiny movements when only gravity is acting
          const horizontalSpeed = movement.length();
          if (horizontalSpeed > 1e-4) { // Small threshold
-             movement.normalize().multiplyScalar(speed);
+             movement.normalize().multiplyScalar(speed); // Ensure consistent speed regardless of direction combination
          } else {
-             movement.set(0, 0, 0); // No horizontal movement if below threshold
+             movement.set(0, 0, 0); // No horizontal movement
          }
-
 
         // --- Collision Detection and Resolution ---
         const currentPos = this.camera.position.clone();
         let nextPos = currentPos.clone();
 
-        // Check X movement component
+        // Check X movement
         let moveX = new THREE.Vector3(movement.x, 0, 0);
         if (!this._checkCollision(world, moveX)) {
              nextPos.add(moveX);
         } else {
-             this.velocity.x = 0; // Stop horizontal velocity if colliding
+             this.velocity.x = 0;
         }
 
-
-        // Check Z movement component (from potentially updated X position)
+        // Check Z movement (from potentially updated X position)
         let moveZ = new THREE.Vector3(0, 0, movement.z);
-         // Check collision from the position *after* potential X move
-        if (!this._checkCollision(world, moveZ.clone().add(new THREE.Vector3(nextPos.x - currentPos.x, 0, 0)))) {
+        if (!this._checkCollision(world, moveZ.clone().add(new THREE.Vector3(nextPos.x - currentPos.x, 0, 0)))) { // Check from new X pos
              nextPos.add(moveZ);
         } else {
-             this.velocity.z = 0; // Stop horizontal velocity if colliding
+             this.velocity.z = 0;
         }
 
         // Check Y movement (gravity/jump)
         let moveY = new THREE.Vector3(0, this.velocity.y * deltaTime, 0);
         let verticalMoveAttempt = moveY.clone();
-        const combinedHorizontalMove = nextPos.clone().sub(currentPos); // Total XZ displacement this frame
-
 
         // Check collision below first (landing/walking)
         if (this.velocity.y <= 0) { // Moving down or stopped vertically
-             // Check points slightly below the final horizontal position + vertical attempt
-            let feetCheckBase = currentPos.clone().add(combinedHorizontalMove).add(verticalMoveAttempt);
-            let feetCollisionPoints = [
-                new THREE.Vector3(feetCheckBase.x - PLAYER_WIDTH/2, feetCheckBase.y - PLAYER_HEIGHT + 0.01, feetCheckBase.z - PLAYER_WIDTH/2),
-                new THREE.Vector3(feetCheckBase.x + PLAYER_WIDTH/2, feetCheckBase.y - PLAYER_HEIGHT + 0.01, feetCheckBase.z - PLAYER_WIDTH/2),
-                new THREE.Vector3(feetCheckBase.x - PLAYER_WIDTH/2, feetCheckBase.y - PLAYER_HEIGHT + 0.01, feetCheckBase.z + PLAYER_WIDTH/2),
-                new THREE.Vector3(feetCheckBase.x + PLAYER_WIDTH/2, feetCheckBase.y - PLAYER_HEIGHT + 0.01, feetCheckBase.z + PLAYER_WIDTH/2),
-            ];
+            let feetCheckPos = nextPos.clone().add(verticalMoveAttempt);
+            let feetCollisionPoint = new THREE.Vector3(feetCheckPos.x, feetCheckPos.y - PLAYER_HEIGHT, feetCheckPos.z);
 
-            if (this._checkCollisionPoints(world, feetCollisionPoints)) {
+            if (this._checkCollisionPoints(world, [
+                feetCollisionPoint.clone().add(new THREE.Vector3(-PLAYER_WIDTH/2, 0, -PLAYER_WIDTH/2)),
+                feetCollisionPoint.clone().add(new THREE.Vector3(PLAYER_WIDTH/2, 0, -PLAYER_WIDTH/2)),
+                feetCollisionPoint.clone().add(new THREE.Vector3(-PLAYER_WIDTH/2, 0, PLAYER_WIDTH/2)),
+                feetCollisionPoint.clone().add(new THREE.Vector3(PLAYER_WIDTH/2, 0, PLAYER_WIDTH/2)),
+            ])) {
                  // Landed on something
-                 // Snap feet to just above the collision surface
-                 nextPos.y = Math.floor(feetCheckBase.y - PLAYER_HEIGHT) + PLAYER_HEIGHT; // Align bottom of player BB with top of block
+                 nextPos.y = Math.floor(nextPos.y + verticalMoveAttempt.y - PLAYER_HEIGHT + 1) + PLAYER_HEIGHT - 0.01; // Snap to ground + epsilon
                  this.velocity.y = 0;
                  this.onGround = true;
-                 // Don't reset canJump here, it's reset on keyup
+                 this.canJump = true; // Allow jump initiation
             } else {
                  // Still falling
                  nextPos.add(verticalMoveAttempt);
                  this.onGround = false;
             }
         } else { // Moving up (jumping)
-              // Check points slightly below the head at the final horizontal position + vertical attempt
-             let headCheckBase = currentPos.clone().add(combinedHorizontalMove).add(verticalMoveAttempt);
-             let headCollisionPoints = [
-                 new THREE.Vector3(headCheckBase.x - PLAYER_WIDTH/2, headCheckBase.y - 0.01, headCheckBase.z - PLAYER_WIDTH/2),
-                 new THREE.Vector3(headCheckBase.x + PLAYER_WIDTH/2, headCheckBase.y - 0.01, headCheckBase.z - PLAYER_WIDTH/2),
-                 new THREE.Vector3(headCheckBase.x - PLAYER_WIDTH/2, headCheckBase.y - 0.01, headCheckBase.z + PLAYER_WIDTH/2),
-                 new THREE.Vector3(headCheckBase.x + PLAYER_WIDTH/2, headCheckBase.y - 0.01, headCheckBase.z + PLAYER_WIDTH/2),
-             ];
+             let headCheckPos = nextPos.clone().add(verticalMoveAttempt);
+             let headCollisionPoint = new THREE.Vector3(headCheckPos.x, headCheckPos.y, headCheckPos.z); // Head level
 
-             if (this._checkCollisionPoints(world, headCollisionPoints)) {
+             if (this._checkCollisionPoints(world, [
+                 headCollisionPoint.clone().add(new THREE.Vector3(-PLAYER_WIDTH/2, 0, -PLAYER_WIDTH/2)),
+                 headCollisionPoint.clone().add(new THREE.Vector3(PLAYER_WIDTH/2, 0, -PLAYER_WIDTH/2)),
+                 headCollisionPoint.clone().add(new THREE.Vector3(-PLAYER_WIDTH/2, 0, PLAYER_WIDTH/2)),
+                 headCollisionPoint.clone().add(new THREE.Vector3(PLAYER_WIDTH/2, 0, PLAYER_WIDTH/2)),
+             ])) {
                  // Hit ceiling
-                  // Snap head slightly below ceiling
-                 nextPos.y = Math.ceil(headCheckBase.y) - 0.01;
                  this.velocity.y = 0;
-                 this.onGround = false; // Technically not on ground if hitting ceiling
+                 // Adjust position slightly below ceiling if needed (optional)
              } else {
                   // Still ascending
                   nextPos.add(verticalMoveAttempt);
@@ -357,19 +365,18 @@ export class Player {
              }
         }
 
-
         // Update camera position
         this.camera.position.copy(nextPos);
     }
 
-     // Helper to check multiple specific points for collision
-     _checkCollisionPoints(world, points) {
-         for (const point of points) {
-             const voxel = world.getVoxel(Math.floor(point.x), Math.floor(point.y), Math.floor(point.z));
-             if (BlockData.isSolid(voxel)) {
-                 return true; // Collision detected at one of the points
-             }
-         }
-         return false; // No collision at any point
-     }
+    // Helper to check multiple specific points for collision
+    _checkCollisionPoints(world, points) {
+        for (const point of points) {
+            const voxel = world.getVoxel(Math.floor(point.x), Math.floor(point.y), Math.floor(point.z));
+            if (BlockData.isSolid(voxel)) {
+                return true; // Collision detected at one of the points
+            }
+        }
+        return false; // No collision at any point
+    }
 }
