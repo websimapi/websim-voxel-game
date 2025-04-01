@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { Chunk } from './chunk.js';
-import { BlockData } from './blockdata.js'; // Import BlockData
 
 export const CHUNK_SIZE = 16;
 export const RENDER_DISTANCE = 4; // Chunks in each direction (total diameter = 2*RENDER_DISTANCE+1)
@@ -65,46 +64,32 @@ export class World {
            const voxelX = x - chunkX * CHUNK_SIZE;
            const voxelY = y - chunkY * CHUNK_SIZE;
            const voxelZ = z - chunkZ * CHUNK_SIZE;
-
-           // Prevent changing already correct value (optimization)
-           if (chunk.getVoxel(voxelX, voxelY, voxelZ) === value) {
-               return false; // No change needed
-           }
-
            chunk.setVoxel(voxelX, voxelY, voxelZ, value);
-           console.log(`Set voxel (${x}, ${y}, ${z}) [Chunk ${chunkX},${chunkY},${chunkZ} | Local ${voxelX},${voxelY},${voxelZ}] to ${value}`); // More detailed log
-
            // Need to update this chunk's mesh and potentially neighbors
            this.updateChunkGeometry(chunkX, chunkY, chunkZ);
 
             // Update neighboring chunk meshes if the block was on a border
-            // Check X boundaries
            if (voxelX === 0) this.updateChunkGeometry(chunkX - 1, chunkY, chunkZ);
-           else if (voxelX === CHUNK_SIZE - 1) this.updateChunkGeometry(chunkX + 1, chunkY, chunkZ);
-
-           // Check Y boundaries
-            if (voxelY === 0) this.updateChunkGeometry(chunkX, chunkY - 1, chunkZ);
-            else if (voxelY === CHUNK_SIZE - 1) this.updateChunkGeometry(chunkX, chunkY + 1, chunkZ);
-
-            // Check Z boundaries
+           if (voxelX === CHUNK_SIZE - 1) this.updateChunkGeometry(chunkX + 1, chunkY, chunkZ);
+           if (voxelY === 0) this.updateChunkGeometry(chunkX, chunkY - 1, chunkZ);
+           if (voxelY === CHUNK_SIZE - 1) this.updateChunkGeometry(chunkX, chunkY + 1, chunkZ);
            if (voxelZ === 0) this.updateChunkGeometry(chunkX, chunkY, chunkZ - 1);
-           else if (voxelZ === CHUNK_SIZE - 1) this.updateChunkGeometry(chunkX, chunkY, chunkZ + 1);
-
+           if (voxelZ === CHUNK_SIZE - 1) this.updateChunkGeometry(chunkX, chunkY, chunkZ + 1);
 
            return true; // Successfully set voxel
        }
-       console.warn(`Attempted to set voxel in non-existent chunk at: ${x}, ${y}, ${z}`);
        return false; // Chunk doesn't exist
     }
 
-    // Add existing chunks to the scene (used initially)
-    addToScene(scene) {
+
+     // Add existing chunks to the scene (used initially)
+     addToScene(scene) {
         for (const key in this.chunkMeshes) {
              if (this.chunkMeshes.hasOwnProperty(key)) {
                  scene.add(this.chunkMeshes[key]);
              }
          }
-    }
+     }
 
     // Load/Unload chunks around the player
     async updateChunksAroundPlayer(playerChunkPos, scene) {
@@ -131,32 +116,10 @@ export class World {
                                 const groundHeight = 8; // Simple flat ground at y=8
                                 for (let vy = 0; vy < CHUNK_SIZE; vy++) {
                                     const worldY = chunkY * CHUNK_SIZE + vy;
-                                    let blockType = BlockData.types.AIR; // Default to air
-
-                                    if (worldY < groundHeight - 3) {
-                                        blockType = BlockData.types.STONE; // Deep stone
-                                    } else if (worldY < groundHeight - 1) {
-                                        blockType = BlockData.types.DIRT; // Layer of dirt
-                                    } else if (worldY < groundHeight) {
-                                        blockType = BlockData.types.GRASS; // Top grass layer
-                                    }
-
-                                    // Add some simple "trees" (just logs for now)
-                                    if (blockType === BlockData.types.GRASS) {
-                                        // Simple probability check at chunk corners (for demonstration)
-                                         if (vx === 4 && vz === 4 && Math.random() < 0.8) {
-                                             for (let th=0; th < 4; th++) {
-                                                 // Check if space above is air before placing log
-                                                 if (vy + 1 + th < CHUNK_SIZE) {
-                                                     newChunk.setVoxel(vx, vy + 1 + th, vz, BlockData.types.WOOD);
-                                                 }
-                                             }
-                                         }
-                                    }
-
-                                    // Only set non-air blocks if not already set by tree gen
-                                    if (blockType !== BlockData.types.AIR && newChunk.getVoxel(vx, vy, vz) === BlockData.types.AIR) {
-                                        newChunk.setVoxel(vx, vy, vz, blockType);
+                                    if (worldY < groundHeight) {
+                                        newChunk.setVoxel(vx, vy, vz, worldY < groundHeight - 3 ? 3 : (worldY < groundHeight -1 ? 2 : 1)); // 3=Stone, 2=Dirt, 1=Grass
+                                    } else {
+                                        newChunk.setVoxel(vx, vy, vz, 0); // Air
                                     }
                                 }
                             }
@@ -196,8 +159,8 @@ export class World {
         return Promise.resolve();
     }
 
-    // Update or create the mesh for a specific chunk
-    updateChunkGeometry(chunkX, chunkY, chunkZ) {
+     // Update or create the mesh for a specific chunk
+     updateChunkGeometry(chunkX, chunkY, chunkZ) {
         const key = `${chunkX},${chunkY},${chunkZ}`;
         const chunk = this.getChunk(chunkX, chunkY, chunkZ);
         if (!chunk) return; // Chunk doesn't exist, nothing to update

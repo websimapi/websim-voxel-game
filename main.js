@@ -2,10 +2,11 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { World } from './world.js';
 import { Player } from './player.js';
+import { BlockData } from './blockdata.js'; // Import BlockData
 
 // Basic Scene Setup
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87CEEB);
+scene.background = new THREE.Color(0x87CEEB); // Set background color explicitly
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -13,17 +14,19 @@ document.body.appendChild(renderer.domElement);
 
 // World
 const world = new World();
-// Make world accessible globally FOR NOW (needed for interaction module)
-// TODO: Pass world reference properly instead of relying on global
-window.world = world;
+// world.generate(); // Generation happens dynamically now
+// world.addToScene(scene); // Chunks added dynamically
 
-// Player (Pass camera and world)
-const player = new Player(camera, world);
-// Player constructor now handles setting initial camera position
+// Make world accessible globally for now (needed for player block interaction)
+window.world = world; // TODO: Refactor this later to avoid global scope pollution
+
+// Player
+const player = new Player(camera);
+// scene.add(player.camera); // Camera is already added via controls.getObject()
 
 // Controls
 const controls = new PointerLockControls(camera, document.body);
-scene.add(controls.getObject()); // Add the controls object (which contains the camera) to the scene
+scene.add(controls.getObject());
 
 // Add listener for pointer lock activation
 const menu = document.getElementById('menu');
@@ -37,10 +40,8 @@ controls.addEventListener('lock', function () {
 
 controls.addEventListener('unlock', function () {
     blocker.style.display = 'block';
-    menu.style.display = '';
+    menu.style.display = ''; // Re-enable display (uses default CSS)
     console.log('Pointer unlocked');
-    // Stop player breaking action if pointer is unlocked
-    player.interaction._stopBreaking(); // Access the interaction module's stop function
 });
 
 // Handle click to lock pointer
@@ -48,8 +49,9 @@ blocker.addEventListener('click', function () {
     controls.lock();
 });
 
+
 // Lighting
-const ambientLight = new THREE.AmbientLight(0xcccccc, 0.8);
+const ambientLight = new THREE.AmbientLight(0xcccccc, 0.8); // Increased ambient light a bit
 scene.add(ambientLight);
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
 directionalLight.position.set(1, 1, 0.5).normalize();
@@ -62,20 +64,22 @@ window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }, false);
 
-// Remove DEBUG CUBE if no longer needed
-const testCube = scene.getObjectByName("debug_cube"); // Assuming we named it before
-if (testCube) {
-    scene.remove(testCube);
-    testCube.geometry.dispose();
-    testCube.material.dispose();
-    console.log("Removed debug cube.");
-}
+// -- DEBUG CUBE --
+// Add a simple cube to verify basic rendering
+const testGeo = new THREE.BoxGeometry(1, 1, 1);
+const testMat = new THREE.MeshBasicMaterial({ color: 0xff0000 }); // Bright red, no lighting needed
+const testCube = new THREE.Mesh(testGeo, testMat);
+testCube.position.set(5, 11, 5); // Place it near the player start, slightly above ground
+scene.add(testCube);
+console.log("Added debug cube to scene at (5, 11, 5)");
 // --- END DEBUG CUBE ---
 
 
 // Game Loop
 let lastTime = performance.now();
-const loadingElement = document.getElementById('loading');
+// const clock = new THREE.Clock(); // Clock is defined here (but not used currently)
+const loadingElement = document.getElementById('loading'); // Get loading element
+
 
 function animate() {
     requestAnimationFrame(animate);
@@ -85,34 +89,43 @@ function animate() {
     lastTime = currentTime;
 
     // Update player only if controls are locked
-    // The Player.update method now orchestrates controls, interaction, and physics
     if (controls.isLocked === true) {
-        player.update(deltaTime, controls); // Pass controls object
+        player.update(deltaTime, world, controls);
     }
 
-    // Check for chunk loading/unloading based on player position
-    // Convert world position directly from camera as player object holds it
-    const playerChunkPos = world.worldPosToChunkPos(player.camera.position);
 
-    if ((!playerChunkPos.equals(world.lastPlayerChunkPos) || !world.initialLoadComplete) && world.initialLoadComplete) {
+    // Check for chunk loading/unloading based on player position
+    const playerChunkPos = world.worldPosToChunkPos(player.camera.position);
+    // Check if chunk position changed OR initial load isn't complete yet
+    if ((!playerChunkPos.equals(world.lastPlayerChunkPos) || !world.initialLoadComplete) && world.initialLoadComplete) { // Only trigger updates after initial load finishes
+        // Prevent spamming updates if player moves quickly across chunk boundaries
+        // A small delay or checking a flag could be added here if needed.
+        // For now, we rely on the async nature and the check at the start.
         loadingElement.style.display = 'block';
         loadingElement.innerText = 'Loading chunks...';
 
+        // Use setTimeout to allow the loading message to render before potentially blocking thread
+        // (though async/await helps mitigate blocking)
         setTimeout(() => {
             world.updateChunksAroundPlayer(playerChunkPos, scene)
                 .then(() => {
+                    console.log(`Chunk update around ${playerChunkPos.x},${playerChunkPos.y},${playerChunkPos.z} complete.`);
                     world.lastPlayerChunkPos.copy(playerChunkPos);
+                    // Hiding the loading message might happen too quickly if updates are fast,
+                    // but let's hide it on success for now.
                     loadingElement.style.display = 'none';
                 })
                 .catch(error => {
                     console.error("Error updating chunks:", error);
                     loadingElement.innerText = 'Error loading chunks!';
-                    loadingElement.style.display = 'block';
+                    loadingElement.style.display = 'block'; // Keep showing error
+                    // Potentially stop trying to update for a bit?
                 });
-        }, 10);
-    } else if (loadingElement.style.display !== 'none' && world.initialLoadComplete) {
+        }, 10); // Short delay
+    } else if (loadingElement.style.display !== 'none' && world.initialLoadComplete) { // Hide if not updating and initial load done
         loadingElement.style.display = 'none';
     }
+
 
     renderer.render(scene, camera);
 }
@@ -129,17 +142,15 @@ world.updateChunksAroundPlayer(initialPlayerChunkPos, scene)
         loadingElement.style.display = 'none';
         world.initialLoadComplete = true;
         world.lastPlayerChunkPos.copy(initialPlayerChunkPos);
-        // Player constructor now sets initial position, but we ensure ground state after load
+        // Ensure player starts on ground after initial terrain is loaded
+        player.camera.position.y = 10.5; // Start slightly higher to avoid immediate ground collision issues
         player.velocity.set(0, 0, 0);
-        player.onGround = false; // Force ground check on first proper update
-        player.controls.canJump = true; // Ensure jump is possible if starting on ground
-        // We might need a small delay or a single physics step here to ensure player snaps to ground
-        // before the first render if they start slightly above. Or adjust start Y pos carefully.
-        player.update(0.01, controls); // Run a tiny update step to potentially snap to ground
-
+        player.onGround = false; // Force ground check on first frame
+        player.canJump = true; // Allow jumping right away if on ground
         animate(); // Start the game loop after initial load
     })
     .catch(error => {
         console.error("Initial chunk loading failed:", error);
         loadingElement.innerText = 'FATAL: Error loading world!';
+        // Optionally display the error to the user more permanently
     });
