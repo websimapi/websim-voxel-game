@@ -4,7 +4,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voxel Game</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #87CEEB; }
+        body { margin: 0; overflow: hidden; /* background-color: #87CEEB; Scene bg is set now */ }
         canvas { display: block; }
         #crosshair {
             position: absolute;
@@ -16,6 +16,7 @@
             border: 1px solid black;
             transform: translate(-50%, -50%);
             pointer-events: none; /* Ensure it doesn't interfere with mouse events */
+            z-index: 2; /* Above blocker */
         }
         #loading {
             position: absolute;
@@ -27,10 +28,39 @@
             background: rgba(0,0,0,0.5);
             padding: 5px;
             border-radius: 3px;
+            z-index: 3; /* Above crosshair and blocker */
+            display: none; /* Initially hidden */
+        }
+        #blocker {
+			position: absolute;
+			width: 100%;
+			height: 100%;
+			background-color: rgba(0,0,0,0.5);
+            z-index: 1; /* Below crosshair and loading */
+		}
+		#menu {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			text-align: center;
+			color: white;
+			font-family: sans-serif;
+            z-index: 1; /* Below crosshair and loading */
+		}
+        #menu p {
+            font-size: 24px;
         }
     </style>
 </head>
 <body>
+    <div id="blocker">
+        <div id="menu">
+            <p>Click to Play</p>
+            <p>W/A/S/D: Move | SPACE: Jump | MOUSE: Look</p>
+            <p>LEFT CLICK: Break Block | RIGHT CLICK: Place Block</p>
+        </div>
+    </div>
     <div id="crosshair"></div>
     <div id="loading">Loading...</div>
     <script type="importmap">
