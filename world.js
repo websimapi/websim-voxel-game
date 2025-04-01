@@ -173,7 +173,8 @@ export class World {
             // Material can often be reused
         }
 
-        if (geometry.attributes.position.count > 0) { // Only create mesh if there's geometry
+        // Check if the geometry has positions AND if there are any vertices
+        if (geometry.attributes.position && geometry.attributes.position.count > 0) { // Only create mesh if there's geometry
              const mesh = new THREE.Mesh(geometry, material);
              mesh.position.set(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
              mesh.name = `chunk_${key}`; // For debugging
@@ -182,10 +183,10 @@ export class World {
              if (this.chunkMeshes[key] && this.chunkMeshes[key].parent) {
                  const oldMesh = this.chunkMeshes[key];
                  oldMesh.geometry = geometry;
-                 oldMesh.material = material; // Update material if needed
+                 // oldMesh.material = material; // Material is likely shared, no need to update unless changed
              } else if (this.chunkMeshes[key]) { // Existed but wasn't in scene
                  this.chunkMeshes[key].geometry = geometry;
-                 this.chunkMeshes[key].material = material;
+                 // this.chunkMeshes[key].material = material;
                  // Don't add to scene here, updateChunksAroundPlayer handles adding/removing
              } else { // New mesh
                  this.chunkMeshes[key] = mesh;
@@ -197,10 +198,12 @@ export class World {
                  this.chunkMeshes[key].parent.remove(this.chunkMeshes[key]);
              }
              if (this.chunkMeshes[key]) {
-                 this.chunkMeshes[key].geometry.dispose(); // Dispose geometry
+                 // Geometry was already disposed above if mesh existed.
+                 // If geometry was created but empty, it hasn't been assigned yet.
+                 // No need to dispose geometry here again unless it was just created and is empty.
+                 // geometry.dispose(); // This might dispose a valid empty geometry if it wasn't assigned
              }
              delete this.chunkMeshes[key]; // Remove reference
         }
      }
 }
-
