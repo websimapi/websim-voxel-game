@@ -88,51 +88,58 @@ export class Player {
             }
 
             const point = intersection.point;
-            // Important: Use the normal vector directly associated with the intersected face
-            // It's crucial this normal is in world space, which it should be for intersectObjects
+            // The intersection normal is in world space, pointing OUT from the face that was hit.
             const normal = intersection.face.normal.clone();
 
-            // The normal vector might not be perfectly axis-aligned due to mesh transformations.
-            // We need the normal relative to the world axes for correct block identification.
-            // However, since chunks are axis-aligned and not rotated, the face normal *should*
-            // align with world axes. If rotations were added, we'd need `object.getWorldDirection(normal)`.
+            // Use a small epsilon to push the point slightly off the face boundary.
+            // This helps ensure flooring gives the correct voxel coordinate.
+            const epsilon = 0.01; // A small value is usually sufficient
 
-            let blockPos;
+            // Calculate the coordinates of the block being clicked ON (for breaking)
+            // Move slightly *into* the block from the intersection point along the normal.
+            const breakBlockPos = point.clone().addScaledVector(normal, -epsilon).floor();
+
+            // Calculate the coordinates where a *new* block would be placed (adjacent to the clicked face)
+            // Move slightly *out* from the intersection point along the normal.
+            const placeBlockPos = point.clone().addScaledVector(normal, epsilon).floor();
+
             if (event.button === 0) { // Left click: Destroy block
-                // Move slightly *into* the block face to get the correct block coordinate.
-                // Use a small epsilon (e.g., 0.1) instead of 0.5 to avoid issues at edges/corners.
-                 blockPos = point.clone().sub(normal.multiplyScalar(0.1)).floor();
-                 console.log(`Attempting destroy at: ${blockPos.x}, ${blockPos.y}, ${blockPos.z} (Intersection: ${point.x.toFixed(2)},${point.y.toFixed(2)},${point.z.toFixed(2)}, Normal: ${normal.x.toFixed(2)},${normal.y.toFixed(2)},${normal.z.toFixed(2)})`);
-                 // Make sure the world reference is still valid
+                // Use the calculated breakBlockPos
+                 console.log(`Attempting destroy at: ${breakBlockPos.x}, ${breakBlockPos.y}, ${breakBlockPos.z}`);
                  if (window.world && typeof window.world.setVoxel === 'function') {
-                     window.world.setVoxel(blockPos.x, blockPos.y, blockPos.z, 0); // 0 is air
+                     window.world.setVoxel(breakBlockPos.x, breakBlockPos.y, breakBlockPos.z, BlockData.types.AIR); // Use AIR type
                  } else {
                      console.error("World reference is invalid or setVoxel is not a function.");
                  }
+
             } else if (event.button === 2) { // Right click: Place block
-                 // Move slightly *away* from the block face to place adjacent
-                 // Using 0.1 distance away from the intersection point along the normal.
-                 blockPos = point.clone().add(normal.multiplyScalar(0.1)).floor();
-                 console.log(`Attempting place at: ${blockPos.x}, ${blockPos.y}, ${blockPos.z} (Intersection: ${point.x.toFixed(2)},${point.y.toFixed(2)},${point.z.toFixed(2)}, Normal: ${normal.x.toFixed(2)},${normal.y.toFixed(2)},${normal.z.toFixed(2)})`);
+                 // Use the calculated placeBlockPos
+                 console.log(`Attempting place at: ${placeBlockPos.x}, ${placeBlockPos.y}, ${placeBlockPos.z}`);
 
-                 // Basic check to prevent placing inside player (more robust check needed)
-                 // Calculate player bounding box in world coordinates
+                 // --- Player Collision Check ---
+                 // Define the player's bounding box (AABB)
+                 // Feet are at camera.y - PLAYER_HEIGHT, Head is at camera.y
                  const playerMin = this.camera.position.clone().sub(new THREE.Vector3(PLAYER_WIDTH / 2, PLAYER_HEIGHT, PLAYER_WIDTH / 2));
-                 const playerMax = this.camera.position.clone().add(new THREE.Vector3(PLAYER_WIDTH / 2, 0, PLAYER_WIDTH / 2)); // Y max is at camera level (feet are lower)
+                 const playerMax = this.camera.position.clone().add(new THREE.Vector3(PLAYER_WIDTH / 2, 0, PLAYER_WIDTH / 2));
 
-                 const blockCenter = blockPos.clone().addScalar(0.5); // Center of the block to place
+                 // Define the bounding box of the block to be placed (voxel coords are min corner)
+                 const placeBlockMin = placeBlockPos.clone();
+                 const placeBlockMax = placeBlockPos.clone().addScalar(1); // Voxel size is 1x1x1
 
-                 // Check if block placement overlaps with player bounding box
-                 if (
-                    blockCenter.x + 0.5 > playerMin.x && blockCenter.x - 0.5 < playerMax.x &&
-                    blockCenter.y + 0.5 > playerMin.y && blockCenter.y - 0.5 < playerMax.y &&
-                    blockCenter.z + 0.5 > playerMin.z && blockCenter.z - 0.5 < playerMax.z
-                 ) {
-                     console.log("Cannot place block inside player.");
+                 // Check for AABB overlap
+                 const overlaps = (
+                     placeBlockMax.x > playerMin.x && placeBlockMin.x < playerMax.x &&
+                     placeBlockMax.y > playerMin.y && placeBlockMin.y < playerMax.y &&
+                     placeBlockMax.z > playerMin.z && placeBlockMin.z < playerMax.z
+                 );
+
+                 if (overlaps) {
+                     console.log("Cannot place block: Overlaps player.");
                  } else {
-                    // Make sure the world reference is still valid
+                     // Make sure the world reference is still valid
                      if (window.world && typeof window.world.setVoxel === 'function') {
-                         window.world.setVoxel(blockPos.x, blockPos.y, blockPos.z, 1); // 1 is grass for now
+                         // TODO: Use selected block type from inventory later
+                         window.world.setVoxel(placeBlockPos.x, placeBlockPos.y, placeBlockPos.z, BlockData.types.STONE); // Place Stone for now
                      } else {
                           console.error("World reference is invalid or setVoxel is not a function.");
                      }
@@ -141,8 +148,8 @@ export class Player {
         }
     }
 
-     // Basic AABB collision detection
-     _checkCollision(world, moveDirection) {
+    // Basic AABB collision detection
+    _checkCollision(world, moveDirection) {
         const halfWidth = PLAYER_WIDTH / 2;
         const playerPos = this.camera.position;
 
