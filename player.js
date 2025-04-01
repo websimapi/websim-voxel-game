@@ -148,30 +148,43 @@ export class Player {
         const rightDirection = new THREE.Vector3();
 
         controls.getDirection(moveDirection); // Get camera forward direction
-        rightDirection.crossVectors(this.camera.up, moveDirection).normalize(); // Calculate right vector
+
+        // Calculate right vector using correct cross product order (forward x up)
+        // Previous order (up x forward) resulted in the left vector.
+        rightDirection.crossVectors(moveDirection, this.camera.up).normalize();
 
         let deltaX = 0;
         let deltaZ = 0;
 
         if (this.moveForward) {
-            deltaZ -= speed;
+            deltaZ -= speed; // Movement is negated later when applying to moveDirection
         }
         if (this.moveBackward) {
             deltaZ += speed;
         }
         if (this.moveLeft) {
-            deltaX -= speed;
+            deltaX -= speed; // Negative deltaX for left
         }
         if (this.moveRight) {
-            deltaX += speed;
+            deltaX += speed; // Positive deltaX for right
         }
 
          // Calculate final movement vector based on camera direction
          const movement = new THREE.Vector3();
-         movement.add(moveDirection.clone().multiplyScalar(-deltaZ)); // Invert Z because getDirection faces negative Z
+         // Apply forward/backward movement (inverted Z because getDirection points negative Z)
+         movement.add(moveDirection.clone().multiplyScalar(-deltaZ));
+         // Apply left/right movement using the calculated rightDirection
          movement.add(rightDirection.clone().multiplyScalar(deltaX));
          movement.y = 0; // Horizontal movement only
-         movement.normalize().multiplyScalar(speed); // Ensure consistent speed regardless of direction combination
+
+         // Check if there is significant horizontal movement before normalizing and applying speed
+         // This prevents tiny movements when only gravity is acting
+         const horizontalSpeed = movement.length();
+         if (horizontalSpeed > 1e-4) { // Small threshold
+             movement.normalize().multiplyScalar(speed); // Ensure consistent speed regardless of direction combination
+         } else {
+             movement.set(0, 0, 0); // No horizontal movement
+         }
 
 
         // --- Collision Detection and Resolution ---
@@ -256,4 +269,3 @@ export class Player {
          return false; // No collision at any point
      }
 }
-
