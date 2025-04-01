@@ -88,7 +88,8 @@ export class Player {
         if (isPlacement) {
             adjustedPoint.addScaledVector(normal, epsilon);
         } else {
-            adjustedPoint.subScaledVector(normal, epsilon);
+             // Use addScaledVector with negative epsilon to subtract
+            adjustedPoint.addScaledVector(normal, -epsilon);
         }
 
         return adjustedPoint.floor();
