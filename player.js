@@ -82,8 +82,16 @@ export class Player {
 
     // Helper to get the block position based on intersection point and normal
     _getBlockPositionFromIntersection(point, normal, isPlacement) {
-        const offset = isPlacement ? 0.5 : -0.5;
-        return point.clone().addScaledVector(normal, offset).floor();
+        const epsilon = 0.01; // Small offset
+        const adjustedPoint = point.clone();
+
+        if (isPlacement) {
+            adjustedPoint.addScaledVector(normal, epsilon);
+        } else {
+            adjustedPoint.subScaledVector(normal, epsilon);
+        }
+
+        return adjustedPoint.floor();
     }
 
     _startBreaking(blockPos, blockType) {
@@ -129,12 +137,12 @@ export class Player {
 
             const point = intersection.point;
             // Use the face normal for precision, especially at edges
-            const normal = intersection.face.normal;
-
+            const normal = intersection.face.normal.clone().normalize();
 
             if (event.button === 0) { // Left click: Start or continue breaking block
                  const blockPos = this._getBlockPositionFromIntersection(point, normal, false);
                  const blockType = window.world.getVoxel(blockPos.x, blockPos.y, blockPos.z);
+                 console.log(`Clicked block pos (break attempt): ${blockPos.x}, ${blockPos.y}, ${blockPos.z}, type: ${blockType}`); // Debug log
 
                  if (BlockData.isSolid(blockType)) {
                      // If already breaking this block, do nothing (handled in update)
@@ -226,7 +234,7 @@ export class Player {
             let stillLookingAtBlock = false;
             if (intersects.length > 0 && intersects[0].distance <= REACH_DISTANCE) {
                 const intersection = intersects[0];
-                const currentBlockPos = this._getBlockPositionFromIntersection(intersection.point, intersection.face.normal, false);
+                const currentBlockPos = this._getBlockPositionFromIntersection(intersection.point, intersection.face.normal.clone().normalize(), false);
 
                 if (this.breakingBlockInfo.position.equals(currentBlockPos)) {
                      // Still looking at the same block, check time
