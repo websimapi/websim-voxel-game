@@ -76,100 +76,47 @@ export class Player {
 
         // Raycast to find intersected block
         const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera({ x: 0, y: 0 }, this.camera);
-        const chunkMeshesArray = Object.values(window.world.chunkMeshes).filter(mesh => mesh.parent); // Ensure mesh is added to scene
-
-        if (chunkMeshesArray.length === 0) {
-            // console.log("No chunk meshes found for raycasting."); // Less noisy log
-            return; // Nothing to intersect with
-        }
-
-        const intersects = raycaster.intersectObjects(chunkMeshesArray, false);
+        raycaster.setFromCamera({ x: 0, y: 0 }, this.camera); // Center of screen
+        const intersects = raycaster.intersectObjects(Object.values(window.world.chunkMeshes)); // Use global world for now
 
         if (intersects.length > 0) {
             const intersection = intersects[0];
-
-            if (!intersection.face) {
-                 console.warn("Intersection missing face data.");
-                 return;
-            }
-
-            // intersection.point is the exact point in world space where the ray hit the mesh face.
-            // intersection.face.normal is the normal vector of the face that was hit, in world space.
             const point = intersection.point;
-            const normal = intersection.face.normal; // World-space normal of the intersected face
+            const normal = intersection.face.normal;
 
-            // Small offset to push into/out of the block face boundary robustly
-            const epsilon = 0.001; // Reduced epsilon slightly, might help precision
-
-            let blockPos;
-            let targetPos; // Position for placing a block
-
-            // Calculate block position *being aimed at* by pushing slightly INSIDE the hit face
-            blockPos = point.clone().addScaledVector(normal, -epsilon).floor();
-
-            // Calculate the position *adjacent* to the hit face (where a new block would go)
-            // by pushing slightly OUTSIDE the hit face
-            targetPos = point.clone().addScaledVector(normal, epsilon).floor();
-
-            console.log(`Ray Hit: P(${point.x.toFixed(2)}, ${point.y.toFixed(2)}, ${point.z.toFixed(2)}), N(${normal.x.toFixed(1)}, ${normal.y.toFixed(1)}, ${normal.z.toFixed(1)})`);
-            console.log(` -> Calculated Hit Block Pos: ${blockPos.x}, ${blockPos.y}, ${blockPos.z}`);
-            console.log(` -> Calculated Place Target Pos: ${targetPos.x}, ${targetPos.y}, ${targetPos.z}`);
-
-
+            // Calculate position adjustments more precisely - not just using normal magnitude
+            // This accounts better for hitting blocks from sides/bottom
             if (event.button === 0) { // Left click: Destroy block
-                console.log(`Attempting destroy at calculated hit block pos: ${blockPos.x}, ${blockPos.y}, ${blockPos.z}`);
-                const currentBlock = window.world.getVoxel(blockPos.x, blockPos.y, blockPos.z);
-                 if (BlockData.isSolid(currentBlock)) {
-                     console.log(`   Block is solid (${currentBlock}). Destroying.`);
-                     window.world.setVoxel(blockPos.x, blockPos.y, blockPos.z, BlockData.types.AIR); // Set to air
-                 } else {
-                      console.log(`   Block is not solid (${currentBlock}). Cannot destroy.`);
-                 }
-
+                // Convert point to block coordinates precisely
+                const blockX = Math.floor(point.x - (normal.x * 0.001)); // Tiny offset into block
+                const blockY = Math.floor(point.y - (normal.y * 0.001));
+                const blockZ = Math.floor(point.z - (normal.z * 0.001));
+                
+                console.log(`Destroying block at: ${blockX}, ${blockY}, ${blockZ}`);
+                window.world.setVoxel(blockX, blockY, blockZ, 0); // 0 is air
             } else if (event.button === 2) { // Right click: Place block
-                console.log(`Attempting place at calculated target pos: ${targetPos.x}, ${targetPos.y}, ${targetPos.z}`);
-
-                 const targetBlockType = window.world.getVoxel(targetPos.x, targetPos.y, targetPos.z);
-                 if (!BlockData.isSolid(targetBlockType)) {
-                     console.log(`   Target pos is air (${targetBlockType}). Checking collision.`);
-                     // More robust check to prevent placing inside player BBox
-                     const playerHead = this.camera.position;
-                     // Define player BBox based on camera position (head) and dimensions
-                     const playerBBox = new THREE.Box3(
-                         new THREE.Vector3(
-                            playerHead.x - PLAYER_WIDTH / 2,
-                            playerHead.y - PLAYER_HEIGHT + 0.1, // Bottom of feet (+ buffer)
-                            playerHead.z - PLAYER_WIDTH / 2
-                         ),
-                         new THREE.Vector3(
-                            playerHead.x + PLAYER_WIDTH / 2,
-                            playerHead.y - 0.1, // Top of head (- buffer)
-                            playerHead.z + PLAYER_WIDTH / 2
-                         )
-                     );
-
-                     const blockBBox = new THREE.Box3().setFromCenterAndSize(
-                         targetPos.clone().addScalar(0.5), // Center of the block voxel
-                         new THREE.Vector3(1, 1, 1)
-                     );
-
-                     if (!playerBBox.intersectsBox(blockBBox)) {
-                         console.log("   Collision check passed. Placing block.");
-                         window.world.setVoxel(targetPos.x, targetPos.y, targetPos.z, BlockData.types.STONE); // Place Stone for now
-                     } else {
-                         console.log("   Collision check failed: intersects player bounding box.");
-                     }
-                 } else {
-                     console.log(`   Cannot place block: target position is already solid (${targetBlockType}).`);
-                 }
+                // Convert point to adjacent block coordinates precisely
+                const blockX = Math.floor(point.x + (normal.x * 0.001)); // Tiny offset away from block
+                const blockY = Math.floor(point.y + (normal.y * 0.001));
+                const blockZ = Math.floor(point.z + (normal.z * 0.001));
+                
+                console.log(`Placing block at: ${blockX}, ${blockY}, ${blockZ}`);
+                // Basic check to prevent placing inside player
+                const playerFeet = this.camera.position.clone().setY(this.camera.position.y - PLAYER_HEIGHT + 0.1).floor();
+                const playerHead = this.camera.position.clone().setY(this.camera.position.y - 0.1).floor();
+                const blockPos = new THREE.Vector3(blockX, blockY, blockZ);
+                
+                if (!blockPos.equals(playerFeet) && !blockPos.equals(playerHead)) {
+                    window.world.setVoxel(blockX, blockY, blockZ, 1); // 1 is grass for now
+                } else {
+                    console.log("Cannot place block inside player.");
+                }
             }
-        } else {
-            // console.log("Raycast did not hit any chunk meshes."); // Less noisy log
         }
     }
 
-    _checkCollision(world, moveDirection) {
+     // Basic AABB collision detection
+     _checkCollision(world, moveDirection) {
         const halfWidth = PLAYER_WIDTH / 2;
         const playerPos = this.camera.position;
 
