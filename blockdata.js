@@ -9,6 +9,13 @@ const BlockTypes = {
     // Add more blocks here...
 };
 
+// Mining time in seconds
+const BlockHardness = {
+    [BlockTypes.GRASS]: 0.6,
+    [BlockTypes.DIRT]: 0.5,
+    [BlockTypes.STONE]: 1.5,
+};
+
 const TILE_SIZE = 16; // Pixels per tile in the atlas
 const ATLAS_WIDTH_TILES = 4; // How many tiles wide is the atlas
 const ATLAS_HEIGHT_TILES = 4; // How many tiles high is the atlas
@@ -70,7 +77,6 @@ for (const type in BlockTypes) {
     }
 }
 
-
 // Create a placeholder texture atlas using Canvas
 function createTextureAtlas() {
     const canvas = document.createElement('canvas');
@@ -113,9 +119,9 @@ function createTextureAtlas() {
     return texture;
 }
 
-
 export const BlockData = {
     types: BlockTypes,
+    hardness: BlockHardness, // Export hardness data
     texture: createTextureAtlas(), // Generate and assign the texture
 
     // Define geometry for a standard cube face (adjust winding order if needed)
@@ -145,9 +151,14 @@ export const BlockData = {
          if (!blockUVs) return [0, 0, 1, 0, 0, 1, 1, 1]; // Default: full texture if block unknown
          const faceUVData = blockUVs[faceTypeKey] || blockUVs.side; // Default to side if specific face not found
          return faceUVData;
+    },
+
+    // Get hardness for a block type
+    getHardness: (blockType) => {
+        return BlockData.hardness[blockType] ?? 999; // Default to very high hardness if undefined
     }
 };
 
 // Make world accessible globally for mouse click events (temporary solution)
-window.BlockData = BlockData;
-
+// Already done in main.js, not needed here
+// window.BlockData = BlockData;
